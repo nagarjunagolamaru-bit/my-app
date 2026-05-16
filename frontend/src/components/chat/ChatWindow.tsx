@@ -49,6 +49,9 @@ export default function ChatWindow() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [googleExpectedOrigin, setGoogleExpectedOrigin] = useState<string>('');
+  const [editingChatId, setEditingChatId] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   const browserOrigin = window.location.origin;
   const hasOriginMismatch = !!googleExpectedOrigin && googleExpectedOrigin !== browserOrigin;
 
@@ -238,12 +241,7 @@ export default function ChatWindow() {
       return;
     }
 
-    const fallbackTitle = createDefaultNewChatTitle(chatItems.length + 1);
-    const requestedTitle = window.prompt('Enter a title for the new chat', fallbackTitle)?.trim();
-    if (requestedTitle === '') {
-      return;
-    }
-    const newTitle = requestedTitle || fallbackTitle;
+    const newTitle = createDefaultNewChatTitle(chatItems.length + 1);
 
     const created = await createThread(newTitle, accessToken);
     setChatItems((current) => [created, ...current]);
@@ -254,29 +252,52 @@ export default function ChatWindow() {
     setMessages(newChatMessages);
   };
 
-  const handleEditChat = async (chatId: number) => {
-    if (!accessToken) {
-      return;
-    }
-
+  const handleEditChat = (chatId: number) => {
     const target = chatItems.find((item) => item.id === chatId);
     if (!target) {
       return;
     }
 
-    const nextTitle = window.prompt('Edit chat title', target.title)?.trim();
-    if (!nextTitle) {
+    setEditingChatId(chatId);
+    setEditingTitle(target.title);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingChatId(null);
+    setEditingTitle('');
+    setSavingEdit(false);
+  };
+
+  const handleSaveEdit = async (chatId: number) => {
+    if (!accessToken) {
       return;
     }
 
-    const updated = await updateThread(chatId, nextTitle, accessToken);
+    const nextTitle = editingTitle.trim();
+    if (!nextTitle) {
+      setError('Chat title cannot be empty.');
+      return;
+    }
 
-    setChatItems((current) =>
-      current.map((item) => (item.id === chatId ? updated : item)),
-    );
+    setSavingEdit(true);
+    setError(null);
 
-    if (activeChatId === chatId) {
-      setChatTitle(nextTitle);
+    try {
+      const updated = await updateThread(chatId, nextTitle, accessToken);
+
+      setChatItems((current) =>
+        current.map((item) => (item.id === chatId ? updated : item)),
+      );
+
+      if (activeChatId === chatId) {
+        setChatTitle(nextTitle);
+      }
+
+      handleCancelEdit();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to update chat title.';
+      setError(message);
+      setSavingEdit(false);
     }
   };
 
@@ -296,6 +317,10 @@ export default function ChatWindow() {
     }
 
     await deleteThread(chatId, accessToken);
+
+    if (editingChatId === chatId) {
+      handleCancelEdit();
+    }
 
     const nextItems = chatItems.filter((item) => item.id !== chatId);
     setChatItems(nextItems);
@@ -367,6 +392,22 @@ export default function ChatWindow() {
         text: response.reply,
       };
       setMessages((current) => [...current, assistantMessage]);
+
+      // Auto-rename chat to first message if it's a default-named chat
+      if (chatTitle.startsWith('New Chat ')) {
+        try {
+          const newTitle = trimmed.substring(0, 100); // Limit to 100 chars
+          const updated = await updateThread(currentChatId, newTitle, accessToken);
+          setChatTitle(newTitle);
+          setChatItems((current) =>
+            current.map((item) =>
+              item.id === currentChatId ? updated : item,
+            ),
+          );
+        } catch {
+          // Silently fail; chat title update is not critical
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to get a response from the backend.';
       setError(message);
@@ -476,20 +517,10 @@ export default function ChatWindow() {
     <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-4xl flex-col gap-6 px-4 py-8 sm:px-6">
       <div className="rounded-3xl border border-slate-700 bg-slate-950/90 p-6 shadow-xl shadow-slate-950/20">
         <div className="mb-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleNewChat}
-              className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-[0.18em] text-slate-200 transition hover:border-slate-500 hover:text-white"
-            >
-              New Chat
-            </button>
-
-            <div>
-              <p className="text-sm uppercase tracking-[0.24em] text-sky-400/80">Amzur AI Chat</p>
-              <h1 className="text-3xl font-semibold text-white">Employee Assistant</h1>
-              <p className="mt-1 text-xs text-slate-400">Signed in as {user.email}</p>
-            </div>
+          <div>
+            <p className="text-sm uppercase tracking-[0.24em] text-sky-400/80">Amzur AI Chat</p>
+            <h1 className="text-3xl font-semibold text-white">Employee Assistant</h1>
+            <p className="mt-1 text-xs text-slate-400">Signed in as {user.email}</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -533,36 +564,129 @@ export default function ChatWindow() {
                       : 'border-slate-800 bg-slate-900'
                   }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void activateChat(chat.id);
-                    }}
-                    className="w-full truncate text-left text-sm text-slate-100"
-                  >
-                    {chat.title}
-                  </button>
+                  {editingChatId === chat.id ? (
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        value={editingTitle}
+                        onChange={(event) => setEditingTitle(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void handleSaveEdit(chat.id);
+                          }
+                          if (event.key === 'Escape') {
+                            event.preventDefault();
+                            handleCancelEdit();
+                          }
+                        }}
+                        className="h-8 w-full rounded-md border border-slate-600 bg-slate-950 px-2 text-sm text-slate-100 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20"
+                        aria-label="Edit chat title"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleSaveEdit(chat.id);
+                        }}
+                        disabled={savingEdit}
+                        aria-label="Save title"
+                        title="Save title"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-emerald-700/70 text-emerald-300 transition hover:border-emerald-500 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelEdit}
+                        disabled={savingEdit}
+                        aria-label="Cancel edit"
+                        title="Cancel edit"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-600 text-slate-300 transition hover:border-slate-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m18 6-12 12M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void activateChat(chat.id);
+                        }}
+                        className="w-full truncate text-left text-sm text-slate-100"
+                      >
+                        {chat.title}
+                      </button>
 
-                  <div className="mt-2 flex items-center gap-2">
+                      <div className="mt-2 flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => {
-                        void handleEditChat(chat.id);
+                        handleEditChat(chat.id);
                       }}
-                      className="rounded-md border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-300 transition hover:border-slate-500 hover:text-white"
+                      aria-label="Edit chat"
+                      title="Edit chat"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 text-slate-300 transition hover:border-slate-500 hover:text-white"
                     >
-                      Edit
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="h-4 w-4"
+                        aria-hidden="true"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 3.487a2.1 2.1 0 1 1 2.97 2.97L8.4 17.889 4 19l1.111-4.4L16.862 3.487Z" />
+                      </svg>
                     </button>
                     <button
                       type="button"
                       onClick={() => {
                         void handleDeleteChat(chat.id);
                       }}
-                      className="rounded-md border border-rose-700/70 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-rose-300 transition hover:border-rose-500 hover:text-rose-200"
+                      aria-label="Delete chat"
+                      title="Delete chat"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-700/70 text-rose-300 transition hover:border-rose-500 hover:text-rose-200"
                     >
-                      Delete
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="h-4 w-4"
+                        aria-hidden="true"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 6V4h8v2" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 6l-1 14H6L5 6" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M10 11v6M14 11v6" />
+                      </svg>
                     </button>
-                  </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
