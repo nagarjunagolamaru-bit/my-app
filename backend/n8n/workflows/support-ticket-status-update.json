@@ -1,0 +1,106 @@
+{
+  "name": "Support Ticket Status Update Callback",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "support-ticket-status-update",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      },
+      "id": "Webhook_Trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 250]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json;\nif (!input.ticket_id) throw new Error('ticket_id is required');\nif (!input.status) throw new Error('status is required');\n\nconst callbackUrl = input.callback_url || 'http://127.0.0.1:8010/api/support/tickets/status-callback';\nconst callbackToken = input.callback_token || '';\n\nreturn [{\n  json: {\n    callback_url: callbackUrl,\n    callback_token: callbackToken,\n    payload: {\n      ticket_id: input.ticket_id,\n      status: input.status,\n      message: input.message || `Ticket ${input.ticket_id} status changed to ${input.status}.`,\n      category: input.category || null,\n      priority: input.priority || null\n    }\n  }\n}];"
+      },
+      "id": "Prepare_Callback",
+      "name": "Prepare Callback Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 250]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.callback_url}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Callback-Token",
+              "value": "={{$json.callback_token}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.payload}}"
+      },
+      "id": "HTTP_Callback",
+      "name": "Send Status Callback to Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 250]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, forwarded: true, ticket_id: $json.payload.ticket_id, status: $json.payload.status } }}",
+        "options": {}
+      },
+      "id": "Respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1030, 250]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback Payload": {
+      "main": [
+        [
+          {
+            "node": "Send Status Callback to Backend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Status Callback to Backend": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

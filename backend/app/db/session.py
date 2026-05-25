@@ -29,7 +29,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_models() -> None:
-	from app.models import chat  # noqa: F401
+	from app.models import chat, support_ticket  # noqa: F401
 
 	async with engine.begin() as conn:
 		await conn.run_sync(Base.metadata.create_all)

@@ -1,0 +1,703 @@
+{
+  "name": "AI Support Ticket Routing & Escalation System",
+  "nodes": [
+    {
+      "id": "SN_Overview",
+      "name": "Workflow Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-260, 40],
+      "parameters": {
+        "content": "# AI Support Ticket Routing & Escalation System\n\nWebhook -> Validation -> AI Classification -> Transform -> Category Branch -> DB Insert -> Priority Branch -> Emails -> Webhook Response\n\nComplexity coverage:\n- Conditional branching (category + priority)\n- Data transformation (ticket_id, normalization, timestamps)\n- AI integration (LiteLLM gpt-4o via OpenAI Chat Model)\n- DB persistence (Supabase Postgres)\n- Error handling branches (validation, DB, Gmail)\n- Triggered execution (webhook)",
+        "height": 260,
+        "width": 430,
+        "color": 7
+      }
+    },
+    {
+      "id": "SN_Main",
+      "name": "Main Path Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1180, 40],
+      "parameters": {
+        "content": "Main path:\n1) Validate payload + email format\n2) AI classifies category/priority/summary\n3) Normalize values\n4) Branch on category + priority\n5) Persist to Supabase tickets\n6) Send escalation/customer emails\n7) Return structured JSON to backend",
+        "height": 210,
+        "width": 420,
+        "color": 4
+      }
+    },
+    {
+      "id": "SN_Error",
+      "name": "Error Handling Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2580, 40],
+      "parameters": {
+        "content": "Error handling branches:\n- Validation failure -> 400 JSON\n- DB insert failure -> 500 JSON\n- Escalation Gmail failure -> 502 JSON\n- Customer Gmail failure -> 502 JSON\n\nAll failures return structured JSON payloads.",
+        "height": 190,
+        "width": 360,
+        "color": 6
+      }
+    },
+    {
+      "id": "Webhook_Trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 360],
+      "parameters": {
+        "path": "ai-support-ticket-routing-escalation",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "Validate_Payload",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 360],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst body = raw.body || raw;\n\nconst userEmail = (body.user_email || '').trim();\nconst issue = (body.issue || '').trim();\n\nconst errors = [];\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n\nif (!issue) {\n  errors.push('issue must not be empty');\n}\n\nif (!userEmail || !emailRegex.test(userEmail)) {\n  errors.push('user_email must be a valid email');\n}\n\nreturn [{\n  json: {\n    user_email: userEmail,\n    issue,\n    validation_status: errors.length === 0 ? 'valid' : 'invalid',\n    validation_errors: errors\n  }\n}];"
+      }
+    },
+    {
+      "id": "IF_Input_Valid",
+      "name": "IF Input Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [700, 360],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.validation_status }}",
+              "operation": "equal",
+              "value2": "valid"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Respond_Validation_Error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [940, 520],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error_code: 'VALIDATION_ERROR', message: 'Invalid request payload', details: $json.validation_errors, expected_input: { user_email: 'test@gmail.com', issue: 'Payment failed multiple times and this is urgent' } }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "Build_Ticket_Data",
+      "name": "Build Ticket Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 260],
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst now = new Date();\nconst stamp = now.toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);\nconst rand = Math.floor(Math.random() * 9000 + 1000);\n\nreturn [{\n  json: {\n    ticket_id: `TICK-${stamp}-${rand}`,\n    user_email: item.user_email,\n    issue: item.issue,\n    status: 'open',\n    created_at: now.toISOString(),\n    updated_at: now.toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "AI_Classification_Agent",
+      "name": "AI Classification Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1,
+      "position": [1180, 260],
+      "parameters": {
+        "agentType": "conversationalAgent",
+        "text": "={{ 'You are a support ticket classifier.\\nAnalyze the support issue and return valid JSON only with:\\n\\ncategory\\npriority\\nshort_summary\\n\\nRules:\\n\\nPayment/refund/billing -> Billing\\nLogin/system bug/error -> Technical\\nGeneral questions -> General\\n\\nPriority:\\n\\nurgent, immediately, production down, blocked -> High\\notherwise -> Medium\\n\\nSupport issue: ' + $json.issue }}",
+        "options": {
+          "systemMessage": "Return only valid JSON. No markdown. No extra text."
+        }
+      }
+    },
+    {
+      "id": "OpenAI_Chat_Model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [1180, 480],
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "j5psrkCl64PE1jzM",
+          "name": "LiteLLM (training)"
+        }
+      }
+    },
+    {
+      "id": "Parse_AI_Result",
+      "name": "Parse AI Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 260],
+      "parameters": {
+        "jsCode": "const row = $input.first().json;\nconst rawOutput = row.output || row.text || '{}';\n\nlet parsed = {};\ntry {\n  const match = rawOutput.match(/\\{[\\s\\S]*?\\}/);\n  parsed = match ? JSON.parse(match[0]) : {};\n} catch (e) {\n  parsed = {};\n}\n\nreturn [{\n  json: {\n    ...row,\n    ai_category: parsed.category || '',\n    ai_priority: parsed.priority || '',\n    ai_short_summary: parsed.short_summary || ''\n  }\n}];"
+      }
+    },
+    {
+      "id": "Normalize_Data",
+      "name": "Normalize Ticket Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 260],
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst txt = `${item.issue} ${item.ai_short_summary}`.toLowerCase();\n\nlet category = 'General';\nconst aiCategory = (item.ai_category || '').toLowerCase();\nif (aiCategory.includes('bill') || /payment|refund|billing/.test(txt)) {\n  category = 'Billing';\n} else if (aiCategory.includes('tech') || aiCategory.includes('login') || /login|bug|error|system/.test(txt)) {\n  category = 'Technical';\n}\n\nlet priority = 'Medium';\nconst aiPriority = (item.ai_priority || '').toLowerCase();\nif (aiPriority.includes('high') || /urgent|immediately|production down|blocked/.test(txt)) {\n  priority = 'High';\n}\n\nconst shortSummary = item.ai_short_summary || item.issue.slice(0, 140);\n\nreturn [{\n  json: {\n    ...item,\n    category,\n    priority,\n    short_summary: shortSummary,\n    routed_queue: category === 'Technical' ? 'technical_queue' : 'general_queue',\n    escalation_level: priority === 'High' ? 'urgent' : 'standard',\n    updated_at: new Date().toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "IF_Category_Technical",
+      "name": "IF Category = Technical",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1900, 260],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.category }}",
+              "operation": "equal",
+              "value2": "Technical"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Set_Technical_Path",
+      "name": "Set Technical Path",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2140, 180],
+      "parameters": {
+        "includeOtherFields": true,
+        "options": {},
+        "assignments": {
+          "assignments": [
+            {
+              "id": "route_path_1",
+              "name": "route_path",
+              "value": "technical_support_path",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Set_NonTechnical_Path",
+      "name": "Set Non-Technical Path",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2140, 340],
+      "parameters": {
+        "includeOtherFields": true,
+        "options": {},
+        "assignments": {
+          "assignments": [
+            {
+              "id": "route_path_2",
+              "name": "route_path",
+              "value": "billing_or_general_path",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Store_Ticket_Supabase",
+      "name": "Store Ticket in Supabase",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2380, 260],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tickets (ticket_id, user_email, issue, category, priority, status, created_at) VALUES ('{{ $json.ticket_id }}', '{{ $json.user_email }}', '{{ $json.issue.replace(/'/g, \"''\") }}', '{{ $json.category }}', '{{ $json.priority }}', '{{ $json.status }}', '{{ $json.created_at }}') RETURNING ticket_id, category, priority, status, created_at",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "IkRUHFfDw4Ev6LcP",
+          "name": "Postgres (training)"
+        }
+      },
+      "continueOnFail": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "IF_DB_Insert_Failed",
+      "name": "IF DB Insert Failed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2620, 260],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.error?.message || '' }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Respond_DB_Error",
+      "name": "Respond DB Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2860, 360],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error_code: 'DB_INSERT_FAILED', stage: 'database_persistence', message: 'Failed to store ticket in Supabase', details: $json.error?.message || 'Unknown DB error' }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    },
+    {
+      "id": "IF_Priority_High",
+      "name": "IF Priority = High",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2860, 180],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Normalize Ticket Data').item.json.priority }}",
+              "operation": "equal",
+              "value2": "High"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Send_Urgent_Escalation_Email",
+      "name": "Send Urgent Escalation Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [3100, 100],
+      "parameters": {
+        "sendTo": "={{ $env.SUPPORT_ESCALATION_EMAIL || 'nagarjuna.g@amzur.com' }}",
+        "subject": "=[URGENT] High Priority Ticket {{ $('Normalize Ticket Data').item.json.ticket_id }}",
+        "emailType": "html",
+        "message": "=<h3>High Priority Ticket Escalation</h3><p>Ticket ID: {{ $('Normalize Ticket Data').item.json.ticket_id }}</p><p>User: {{ $('Normalize Ticket Data').item.json.user_email }}</p><p>Category: {{ $('Normalize Ticket Data').item.json.category }}</p><p>Priority: {{ $('Normalize Ticket Data').item.json.priority }}</p><p>Issue: {{ $('Normalize Ticket Data').item.json.issue }}</p><p>Summary: {{ $('Normalize Ticket Data').item.json.short_summary }}</p>",
+        "options": {}
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Wb6rLe3zb8BksuYQ",
+          "name": "Gmail (training)"
+        }
+      },
+      "continueOnFail": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "IF_Escalation_Email_Failed",
+      "name": "IF Escalation Email Failed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [3340, 100],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.error?.message || '' }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Respond_Escalation_Email_Error",
+      "name": "Respond Escalation Email Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3580, 180],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error_code: 'GMAIL_ESCALATION_FAILED', stage: 'gmail_escalation', message: 'Urgent escalation email failed', details: $json.error?.message || 'Unknown Gmail error' }) }}",
+        "options": {
+          "responseCode": 502
+        }
+      }
+    },
+    {
+      "id": "Send_Customer_Confirmation",
+      "name": "Send Customer Confirmation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [3580, 20],
+      "parameters": {
+        "sendTo": "={{ $('Normalize Ticket Data').item.json.user_email }}",
+        "subject": "=Support Ticket {{ $('Normalize Ticket Data').item.json.ticket_id }} Created",
+        "emailType": "html",
+        "message": "=<h3>Support Ticket Created</h3><p>Your ticket has been created successfully.</p><p>Ticket ID: {{ $('Normalize Ticket Data').item.json.ticket_id }}</p><p>Category: {{ $('Normalize Ticket Data').item.json.category }}</p><p>Priority: {{ $('Normalize Ticket Data').item.json.priority }}</p><p>Status: open</p><p>Summary: {{ $('Normalize Ticket Data').item.json.short_summary }}</p>",
+        "options": {}
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Wb6rLe3zb8BksuYQ",
+          "name": "Gmail (training)"
+        }
+      },
+      "continueOnFail": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "IF_Customer_Email_Failed",
+      "name": "IF Customer Email Failed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [3820, 20],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.error?.message || '' }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Respond_Customer_Email_Error",
+      "name": "Respond Customer Email Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [4060, 100],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error_code: 'GMAIL_CONFIRMATION_FAILED', stage: 'gmail_customer_confirmation', message: 'Customer confirmation email failed', details: $json.error?.message || 'Unknown Gmail error' }) }}",
+        "options": {
+          "responseCode": 502
+        }
+      }
+    },
+    {
+      "id": "Respond_Success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [4060, -60],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ticket_id: $('Normalize Ticket Data').item.json.ticket_id, category: $('Normalize Ticket Data').item.json.category, priority: $('Normalize Ticket Data').item.json.priority, status: 'open', message: 'Support ticket created successfully' }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "Error_Trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [220, 680],
+      "parameters": {}
+    },
+    {
+      "id": "Log_Unhandled_Error",
+      "name": "Log Unhandled Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [460, 680],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tickets (ticket_id, user_email, issue, category, priority, status, created_at) VALUES ('ERR-' || to_char(NOW(),'YYYYMMDDHH24MISS'), 'system@n8n', COALESCE('{{ $json.execution?.error?.message }}','Unhandled workflow error'), 'General', 'High', 'error', NOW())",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "IkRUHFfDw4Ev6LcP",
+          "name": "Postgres (training)"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Payload": {
+      "main": [
+        [
+          {
+            "node": "IF Input Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Input Valid": {
+      "main": [
+        [
+          {
+            "node": "Build Ticket Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Ticket Data": {
+      "main": [
+        [
+          {
+            "node": "AI Classification Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Classification Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Classification Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Result": {
+      "main": [
+        [
+          {
+            "node": "Normalize Ticket Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Ticket Data": {
+      "main": [
+        [
+          {
+            "node": "IF Category = Technical",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Category = Technical": {
+      "main": [
+        [
+          {
+            "node": "Set Technical Path",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Non-Technical Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Technical Path": {
+      "main": [
+        [
+          {
+            "node": "Store Ticket in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Non-Technical Path": {
+      "main": [
+        [
+          {
+            "node": "Store Ticket in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Ticket in Supabase": {
+      "main": [
+        [
+          {
+            "node": "IF DB Insert Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF DB Insert Failed": {
+      "main": [
+        [
+          {
+            "node": "Respond DB Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Priority = High",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Priority = High": {
+      "main": [
+        [
+          {
+            "node": "Send Urgent Escalation Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Customer Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Urgent Escalation Email": {
+      "main": [
+        [
+          {
+            "node": "IF Escalation Email Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Escalation Email Failed": {
+      "main": [
+        [
+          {
+            "node": "Respond Escalation Email Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Customer Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Customer Confirmation": {
+      "main": [
+        [
+          {
+            "node": "IF Customer Email Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Customer Email Failed": {
+      "main": [
+        [
+          {
+            "node": "Respond Customer Email Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log Unhandled Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": ""
+  },
+  "pinData": {}
+}

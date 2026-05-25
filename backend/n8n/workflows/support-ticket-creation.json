@@ -1,0 +1,138 @@
+{
+  "name": "Support Ticket Creation",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "support-ticket-create",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      },
+      "id": "Webhook_Trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 260]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.issue_summary}}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{$json.issue_description}}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{$json.user_email}}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "IF_Validate",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [430, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json;\nconst text = `${input.issue_summary} ${input.issue_description}`.toLowerCase();\n\nlet category = 'General Inquiry';\nif (/bill|payment|invoice|charge|refund/.test(text)) category = 'Billing';\nelse if (/login|password|otp|access|locked/.test(text)) category = 'Account Access';\nelse if (/bug|crash|error|exception|fail/.test(text)) category = 'Bug Report';\nelse if (/feature|enhancement|request/.test(text)) category = 'Feature Request';\nelse if (/slow|latency|performance|timeout|upload/.test(text)) category = 'Technical Issue';\n\nlet priority = 'Medium';\nif (/urgent|critical|production down|data loss|security/.test(text)) priority = 'Critical';\nelse if (/cannot|blocked|unable|outage|down/.test(text)) priority = 'High';\nelse if (/minor|question|clarification/.test(text)) priority = 'Low';\n\nconst stamp = new Date();\nconst ticketId = `TICK-${stamp.getFullYear()}${String(stamp.getMonth() + 1).padStart(2, '0')}${String(stamp.getDate()).padStart(2, '0')}-${Math.floor(Math.random() * 9000 + 1000)}`;\n\nreturn [{\n  json: {\n    ...input,\n    ticket_id: ticketId,\n    category,\n    priority,\n    status: 'Open',\n    created_at: stamp.toISOString(),\n    updated_at: stamp.toISOString(),\n    message: 'Your ticket has been created successfully.'\n  }\n}];"
+      },
+      "id": "Code_Classify_Generate",
+      "name": "Classify + Generate Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [670, 170]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "support_tickets",
+        "columns": "ticket_id,user_name,user_email,issue_summary,issue_description,category,priority,status,created_at,updated_at",
+        "additionalFields": {}
+      },
+      "id": "DB_Insert",
+      "name": "Store Ticket (Optional DB Node)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [920, 170],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ticket_id: $json.ticket_id, category: $json.category, priority: $json.priority, status: $json.status, message: $json.message } }}",
+        "options": {}
+      },
+      "id": "Respond_Success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1160, 170]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseCode": 400,
+        "responseBody": "={{ { error: 'Invalid support ticket payload. Required: issue_summary, issue_description, user_email' } }}",
+        "options": {}
+      },
+      "id": "Respond_Invalid",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 380]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Payload": {
+      "main": [
+        [
+          {
+            "node": "Classify + Generate Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify + Generate Ticket": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,117 @@
+{
+  "name": "Support Ticket Email Confirmation",
+  "nodes": [
+    {
+      "id": "SN_Overview",
+      "name": "Workflow Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-260, 40],
+      "parameters": {
+        "content": "# Support Ticket Email Confirmation\n\nWebhook -> Build Email Body -> Send Gmail -> Respond OK\n\nTriggered by the FastAPI backend whenever a support ticket is created and no inline email was sent by the main routing workflow.\n\nExpected POST body:\n{\n  \"ticket_id\": \"TKT-20260523-XXXX\",\n  \"user_email\": \"nagarjuna.golamaru@amzur.com\",\n  \"user_name\": \"nagarjuna.golamaru\",\n  \"issue_summary\": \"...\",\n  \"issue_description\": \"...\",\n  \"category\": \"Technical Issue\",\n  \"priority\": \"High\",\n  \"status\": \"open\",\n  \"source\": \"n8n | fallback\"\n}",
+        "height": 320,
+        "width": 480,
+        "color": 7
+      }
+    },
+    {
+      "id": "Webhook_Trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [280, 300],
+      "parameters": {
+        "path": "support-email",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "Build_Email_Body",
+      "name": "Build Email Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 300],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n\nconst ticketId     = (body.ticket_id       || 'N/A').trim();\nconst userName     = (body.user_name       || 'Valued Customer').trim();\nconst userEmail    = (body.user_email      || '').trim();\nconst summary      = (body.issue_summary   || '').trim();\nconst description  = (body.issue_description || '').trim();\nconst category     = (body.category        || 'General Inquiry').trim();\nconst priority     = (body.priority        || 'Medium').trim();\nconst status       = (body.status          || 'open').trim();\nconst source       = (body.source          || 'automation').trim();\n\nif (!userEmail) {\n  throw new Error('user_email is required');\n}\n\nconst priorityColor = {\n  critical: '#dc2626',\n  high:     '#ea580c',\n  medium:   '#d97706',\n  low:      '#16a34a',\n}[priority.toLowerCase()] || '#6b7280';\n\nconst subject = `[${ticketId}] Support Ticket Received – ${summary.slice(0, 60)}${summary.length > 60 ? '…' : ''}`;\n\nconst html = `\n<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>\n<body style=\"margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\">\n  <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#0f172a;padding:40px 16px;\">\n    <tr><td align=\"center\">\n      <table width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;width:100%;background:#1e293b;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);\">\n\n        <!-- Header -->\n        <tr>\n          <td style=\"background:linear-gradient(135deg,#0ea5e9 0%,#6366f1 100%);padding:28px 32px;\">\n            <p style=\"margin:0;font-size:11px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.7);\">Amzur AI Chat</p>\n            <h1 style=\"margin:6px 0 0;font-size:22px;font-weight:700;color:#ffffff;\">Support Ticket Received</h1>\n          </td>\n        </tr>\n\n        <!-- Greeting -->\n        <tr>\n          <td style=\"padding:28px 32px 0;\">\n            <p style=\"margin:0;font-size:15px;color:#cbd5e1;line-height:1.6;\">Hi <strong style=\"color:#f1f5f9;\">${userName.replace('@', '')}</strong>,</p>\n            <p style=\"margin:12px 0 0;font-size:14px;color:#94a3b8;line-height:1.7;\">We've received your support request and our team is on it. Here's a summary of your ticket.</p>\n          </td>\n        </tr>\n\n        <!-- Ticket ID banner -->\n        <tr>\n          <td style=\"padding:20px 32px 0;\">\n            <div style=\"background:#0f172a;border:1px solid rgba(14,165,233,0.3);border-radius:10px;padding:14px 18px;display:flex;align-items:center;\">\n              <p style=\"margin:0;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#64748b;\">Ticket ID</p>\n              <p style=\"margin:4px 0 0;font-size:20px;font-weight:700;color:#38bdf8;letter-spacing:0.04em;\">${ticketId}</p>\n            </div>\n          </td>\n        </tr>\n\n        <!-- Details grid -->\n        <tr>\n          <td style=\"padding:20px 32px 0;\">\n            <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n              <tr>\n                <td width=\"50%\" style=\"padding-right:8px;padding-bottom:12px;vertical-align:top;\">\n                  <div style=\"background:#0f172a;border-radius:8px;padding:12px 14px;border:1px solid rgba(255,255,255,0.06);\">\n                    <p style=\"margin:0;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#64748b;\">Category</p>\n                    <p style=\"margin:4px 0 0;font-size:13px;font-weight:600;color:#e2e8f0;\">${category}</p>\n                  </div>\n                </td>\n                <td width=\"50%\" style=\"padding-left:8px;padding-bottom:12px;vertical-align:top;\">\n                  <div style=\"background:#0f172a;border-radius:8px;padding:12px 14px;border:1px solid rgba(255,255,255,0.06);\">\n                    <p style=\"margin:0;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#64748b;\">Priority</p>\n                    <p style=\"margin:4px 0 0;font-size:13px;font-weight:700;color:${priorityColor};\">${priority.charAt(0).toUpperCase() + priority.slice(1)}</p>\n                  </div>\n                </td>\n              </tr>\n              <tr>\n                <td width=\"50%\" style=\"padding-right:8px;vertical-align:top;\">\n                  <div style=\"background:#0f172a;border-radius:8px;padding:12px 14px;border:1px solid rgba(255,255,255,0.06);\">\n                    <p style=\"margin:0;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#64748b;\">Status</p>\n                    <p style=\"margin:4px 0 0;font-size:13px;font-weight:600;color:#34d399;\">${status.charAt(0).toUpperCase() + status.slice(1)}</p>\n                  </div>\n                </td>\n                <td width=\"50%\" style=\"padding-left:8px;vertical-align:top;\">\n                  <div style=\"background:#0f172a;border-radius:8px;padding:12px 14px;border:1px solid rgba(255,255,255,0.06);\">\n                    <p style=\"margin:0;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#64748b;\">Handled by</p>\n                    <p style=\"margin:4px 0 0;font-size:13px;font-weight:600;color:#e2e8f0;\">${source === 'fallback' ? 'Automated (Fallback)' : 'n8n Automation'}</p>\n                  </div>\n                </td>\n              </tr>\n            </table>\n          </td>\n        </tr>\n\n        <!-- Issue summary -->\n        <tr>\n          <td style=\"padding:16px 32px 0;\">\n            <p style=\"margin:0;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#64748b;\">Issue Summary</p>\n            <p style=\"margin:6px 0 0;font-size:14px;color:#e2e8f0;line-height:1.6;\">${summary}</p>\n          </td>\n        </tr>\n\n        <!-- Issue description -->\n        <tr>\n          <td style=\"padding:14px 32px 0;\">\n            <p style=\"margin:0;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#64748b;\">Details</p>\n            <p style=\"margin:6px 0 0;font-size:13px;color:#94a3b8;line-height:1.7;white-space:pre-line;\">${description}</p>\n          </td>\n        </tr>\n\n        <!-- CTA -->\n        <tr>\n          <td style=\"padding:28px 32px;\">\n            <p style=\"margin:0;font-size:13px;color:#64748b;line-height:1.7;\">Our support team will review your ticket shortly. You will receive a follow-up email once it has been triaged. If this is urgent, please reply directly to this email.</p>\n          </td>\n        </tr>\n\n        <!-- Footer -->\n        <tr>\n          <td style=\"background:#0f172a;padding:20px 32px;border-top:1px solid rgba(255,255,255,0.06);\">\n            <p style=\"margin:0;font-size:11px;color:#475569;\">This is an automated message from Amzur AI Chat. Please do not reply to this address unless prompted.</p>\n          </td>\n        </tr>\n\n      </table>\n    </td></tr>\n  </table>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    ticket_id:  ticketId,\n    to_email:   userEmail,\n    subject,\n    html,\n    user_name:  userName,\n    priority,\n    category,\n    status\n  }\n}];"
+      }
+    },
+    {
+      "id": "Send_Confirmation_Email",
+      "name": "Send Confirmation Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [760, 300],
+      "parameters": {
+        "operation": "send",
+        "sendTo": "={{ $json.to_email }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "senderName": "Amzur Support"
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Wb6rLe3zb8BksuYQ",
+          "name": "Gmail (training)"
+        }
+      }
+    },
+    {
+      "id": "Respond_OK",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, ticket_id: $json.ticket_id, email_sent_to: $json.to_email }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "Respond_Error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1000, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: 'Failed to send confirmation email' }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [{ "node": "Build Email Body", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Email Body": {
+      "main": [
+        [{ "node": "Send Confirmation Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Confirmation Email": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }]
+      ],
+      "error": [
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["support", "email", "automation"]
+}
